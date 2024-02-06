@@ -4,7 +4,12 @@ mutable struct LogBuffer
   events::Array{Event}
 end
 
+
 log_buffer = LogBuffer([])
+log_categories = Dict(:injects => String[], :props => String[], :kills => String[], :gens => String[])
+
+stack_trace_lines = String[]
+
 
 function log_event(evt::Event)
   push!(log_buffer.events, evt)
@@ -49,31 +54,25 @@ function write_error_logs()
   end
 end
 
+
 function write_logs_for_cstg()
   injects  = filter(e -> e.evt_type == :injected, log_buffer.events)
   gens     = filter(e -> e.evt_type == :gen, log_buffer.events)
   props    = filter(e -> e.evt_type == :prop, log_buffer.events)
   kills    = filter(e -> e.evt_type == :kill, log_buffer.events)
 
+   # Update to use the log_categories dictionary
   if length(injects) > 0
-    open(injects_file(), "a") do file
-      write_events(file, injects)
-    end
+    write_events("injects", injects)
   end
   if length(gens) > 0
-    open(gens_file(), "a") do file
-      write_events(file, gens)
-    end
+      write_events("gens", gens)
   end
   if length(props) > 0
-    open(props_file(), "a") do file
-      write_events(file, props)
-    end
+      write_events("props", props)
   end
   if length(kills) > 0
-    open(kills_file(), "a") do file
-      write_events(file, kills)
-    end
+      write_events("kills", kills)
   end
 end
 
@@ -112,19 +111,29 @@ function category(e::Event)
   end
 end
 
-function write_events(file, events::Vector{Event})
+
+function write_events(category_name, events::Vector{Event})
   for e in events
-    if length(e.trace) > 0
+      if length(e.trace) > 0
+          push!(stack_trace_lines, "[$(category(e))] $(format_cstg_stackframe(e.trace[1], e.args))")
+          push!(stack_trace_lines, "\n")
+          # write remaining frames up to ftv-config.log.maxFrames
+          for sf in e.trace[2:(isa(ft_config.log.maxFrames, Unbounded) ? end : (2:(ft_config.log.maxFrames + 1)))]
+              push!(stack_trace_lines, "$(format_cstg_stackframe(sf))")
+              push!(stack_trace_lines, "\n")
+          end
 
-      # correct args in top frame so it's the values not just the traces
-      write(file, "[$(category(e))] $(format_cstg_stackframe(e.trace[1], e.args))\n")
+          push!(stack_trace_lines, "\n")
 
-      # write remaining frames up to ftv-config.log.maxFrames
-      for sf in e.trace[(isa(ft_config.log.maxFrames, Unbounded) ? (2:end) : (2:(ft_config.log.maxFrames + 1)))]
-        write(file, "$(format_cstg_stackframe(sf))\n")
+          # Update to store logs in the appropriate category
+          push!(log_categories[Symbol(category_name)], join(stack_trace_lines))
+          # stack_trace_lines=""
+          empty!(stack_trace_lines)
       end
-
-      write(file, "\n")
-    end
   end
+end
+
+# Function to get the logs for a specific category or all categories
+function get_stack_traces()
+  return log_categories
 end
